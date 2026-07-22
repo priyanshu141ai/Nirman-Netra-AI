@@ -65,6 +65,14 @@ def persist_registration(
             registered_output_uri=output_path.as_uri(),
             checksum=checksum,
             warnings=warnings,
+            before_metadata=pair.before_metadata,
+            after_metadata=pair.after_metadata,
+            common_grid=pair.common_grid,
+            crs_transformations=pair.crs_transformations,
+            visual_refinement_applied=computation.visual_refinement_applied,
+            visual_refinement_method=computation.visual_refinement_method,
+            reliable_for_change_detection=status
+            in {QualityStatus.PASS, QualityStatus.PASS_WITH_WARNING},
         )
         artifact_path = output_directory / f"{pair_id}.registration.json"
         artifact_path.write_text(

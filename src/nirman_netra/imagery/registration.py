@@ -2,7 +2,7 @@
 
 import math
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 
 import cv2
 import numpy as np
@@ -23,6 +23,42 @@ class RegistrationComputation:
     metrics: RegistrationMetrics
     status: QualityStatus
     warnings: tuple[str, ...]
+    visual_refinement_applied: bool
+    visual_refinement_method: Literal["none", "features", "features_ecc"]
+
+
+def accept_geospatial_alignment(
+    pair: AlignedRasterPair, config: ImageryPipelineConfig
+) -> RegistrationComputation:
+    """Use the common grid without local refinement when explicitly configured."""
+
+    overlap = float(np.count_nonzero(pair.valid_mask) / pair.valid_mask.size)
+    score = min(pair.pair_quality.geographic_overlap_ratio, overlap)
+    reliable = score >= config.minimum_registration_score
+    warnings = ["VISUAL_REFINEMENT_SKIPPED"]
+    if not reliable:
+        warnings.append("LOW_REGISTRATION_QUALITY")
+    return RegistrationComputation(
+        transform_matrix=np.asarray([[1, 0, 0], [0, 1, 0]], dtype=np.float64),
+        registered_pixels=pair.after_pixels,
+        registered_valid_mask=pair.valid_mask,
+        metrics=RegistrationMetrics(
+            inlier_count=0,
+            inlier_ratio=0,
+            reprojection_error=0,
+            overlap_ratio=overlap,
+            transform_plausible=True,
+            registration_quality_score=score,
+        ),
+        status=(
+            QualityStatus.PASS_WITH_WARNING
+            if reliable
+            else QualityStatus.REQUIRES_MANUAL_ALIGNMENT
+        ),
+        warnings=tuple(warnings),
+        visual_refinement_applied=False,
+        visual_refinement_method="none",
+    )
 
 
 def _gray(
@@ -212,9 +248,11 @@ def register_aligned_pair(
         raise RegistrationError("transform estimation failed; manual alignment required")
     matrix = np.asarray(estimated, dtype=np.float64)
     warnings: list[str] = []
+    ecc_applied = False
     if config.enable_ecc:
         try:
             matrix = _refine_ecc(before_gray, after_gray, matrix, config)
+            ecc_applied = True
         except cv2.error:
             warnings.append("ECC_REFINEMENT_FAILED")
 
@@ -261,4 +299,6 @@ def register_aligned_pair(
         ),
         status=status,
         warnings=tuple(warnings),
+        visual_refinement_applied=True,
+        visual_refinement_method="features_ecc" if ecc_applied else "features",
     )

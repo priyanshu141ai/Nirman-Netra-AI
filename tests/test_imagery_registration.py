@@ -17,17 +17,21 @@ from nirman_netra.exceptions import (
     RegistrationQualityError,
     TransformValidationError,
 )
+from nirman_netra.imagery.alignment import align_pair
 from nirman_netra.imagery.config import ImageryPipelineConfig
 from nirman_netra.imagery.contracts import (
     ManualAlignmentRequest,
     ManualControlPoint,
     QualityStatus,
+    RasterMetadata,
 )
+from nirman_netra.imagery.crs import select_target_crs
 from nirman_netra.imagery.manual import estimate_manual_transform
 from nirman_netra.imagery.pipeline import RegistrationPipeline
 from nirman_netra.imagery.quality import assess_raster
 from nirman_netra.imagery.raster import LocalRasterIngestor
 from nirman_netra.imagery.registration import validate_transform
+from nirman_netra.imagery.reliability import RegistrationReliabilityLab
 
 SIZE = 192
 CRS = "EPSG:32643"
@@ -80,10 +84,86 @@ def test_raster_ingestion_reads_required_metadata(tmp_path: Path) -> None:
     assert raster.metadata.band_count == 1
     assert raster.metadata.dtype == "uint8"
     assert raster.metadata.crs.value == CRS
+    assert raster.metadata.epsg_code == 32643
     assert raster.metadata.transform == (1.0, 0.0, 500_000.0, 0.0, -1.0, 2_000_000.0)
     assert raster.metadata.resolution == (1.0, 1.0)
     assert raster.metadata.nodata is None
     assert raster.metadata.captured_at == datetime(2025, 1, 10, 12, tzinfo=UTC)
+    assert raster.metadata.content_sha256 == sha256(path.read_bytes()).hexdigest()
+    legacy_payload = raster.metadata.model_dump(mode="json", exclude={"epsg_code"})
+    assert RasterMetadata.model_validate(legacy_payload).epsg_code == 32643
+
+
+def test_shared_projected_crs_is_reused_before_configured_target(tmp_path: Path) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    _write_raster(before_path, _texture())
+    _write_raster(after_path, _texture())
+    ingestor = LocalRasterIngestor()
+
+    target = select_target_crs(
+        ingestor.read(before_path).metadata,
+        ingestor.read(after_path).metadata,
+        "EPSG:32644",
+    )
+
+    assert target.value == CRS
+
+
+def test_different_crs_requires_configured_projected_target(tmp_path: Path) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    _write_raster(before_path, _texture(), crs="EPSG:32643")
+    _write_raster(after_path, _texture(), crs="EPSG:32644")
+    ingestor = LocalRasterIngestor()
+    before, after = ingestor.read(before_path), ingestor.read(after_path)
+
+    with pytest.raises(CRSMismatchError):
+        select_target_crs(before.metadata, after.metadata, None)
+    assert select_target_crs(before.metadata, after.metadata, CRS).value == CRS
+
+
+def test_geographic_sources_use_projected_common_grid_and_record_reprojection(
+    tmp_path: Path,
+) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    geographic_transform = from_origin(75, 18, 0.00001, 0.00001)
+    _write_raster(
+        before_path, _texture(), crs="EPSG:4326", transform=geographic_transform
+    )
+    _write_raster(
+        after_path, _texture(), crs="EPSG:4326", transform=geographic_transform
+    )
+    ingestor = LocalRasterIngestor()
+
+    aligned = align_pair(
+        ingestor.read(before_path),
+        ingestor.read(after_path),
+        ImageryPipelineConfig(minimum_blur_variance=5, target_crs=CRS),
+    )
+
+    assert aligned.crs.is_projected
+    assert aligned.common_grid.epsg_code == 32643
+    assert {item.operation for item in aligned.crs_transformations} == {"reprojection"}
+
+
+def test_geographic_sources_without_target_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "geographic.tif"
+    _write_raster(
+        path,
+        _texture(),
+        crs="EPSG:4326",
+        transform=from_origin(75, 18, 0.00001, 0.00001),
+    )
+    raster = LocalRasterIngestor().read(path)
+
+    with pytest.raises(CRSMismatchError):
+        align_pair(raster, raster, ImageryPipelineConfig(minimum_blur_variance=5))
+
+
+def test_configured_registration_target_must_be_projected() -> None:
+    with pytest.raises(ValueError, match="invalid"):
+        ImageryPipelineConfig(target_crs="not-a-crs")
+    with pytest.raises(ValueError, match="projected"):
+        ImageryPipelineConfig(target_crs="EPSG:4326")
 
 
 def test_identity_registration_is_deterministic_and_preserves_sources(tmp_path: Path) -> None:
@@ -151,6 +231,21 @@ def test_rotation_within_supported_range(tmp_path: Path) -> None:
 
     assert artifact.status != QualityStatus.REJECTED
     assert artifact.metrics.transform_plausible
+
+
+def test_intensity_refinement_is_recorded(tmp_path: Path) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    image = _texture()
+    _write_raster(before_path, image)
+    _write_raster(after_path, image)
+    pipeline = RegistrationPipeline(
+        ImageryPipelineConfig(minimum_blur_variance=5, enable_ecc=True)
+    )
+
+    artifact = pipeline.run(before_path, after_path, tmp_path / "out")
+
+    assert artifact.visual_refinement_applied
+    assert artifact.visual_refinement_method == "features_ecc"
 
 
 def test_insufficient_geographic_overlap_fails(tmp_path: Path) -> None:
@@ -221,3 +316,73 @@ def test_manual_control_points_use_same_transform_policy() -> None:
 
     assert matrix[0, 2] == pytest.approx(-5)
     assert matrix[1, 2] == pytest.approx(0)
+
+
+def test_geospatial_only_mode_records_skipped_visual_refinement(tmp_path: Path) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    image = _texture()
+    _write_raster(before_path, image)
+    _write_raster(after_path, image)
+    pipeline = RegistrationPipeline(
+        ImageryPipelineConfig(minimum_blur_variance=5, enable_visual_refinement=False)
+    )
+
+    artifact = pipeline.run(before_path, after_path, tmp_path / "out")
+
+    assert artifact.status == QualityStatus.PASS_WITH_WARNING
+    assert artifact.reliable_for_change_detection
+    assert not artifact.visual_refinement_applied
+    assert artifact.visual_refinement_method == "none"
+    assert "VISUAL_REFINEMENT_SKIPPED" in artifact.warnings
+    assert {item.operation for item in artifact.crs_transformations} == {"identity"}
+
+
+def test_reliability_lab_rejects_missing_crs_without_no_change_claim(tmp_path: Path) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    _write_raster(before_path, _texture(), crs=None)
+    _write_raster(after_path, _texture())
+
+    report = RegistrationReliabilityLab().evaluate(
+        before_path,
+        after_path,
+        tmp_path / "out",
+        before_asset_id="before-missing-crs",
+        after_asset_id="after-valid",
+    )
+
+    assert report.status == QualityStatus.REJECTED
+    assert not report.reliable_for_change_detection
+    assert report.failure_stage == "ingestion"
+    assert report.reason_codes == ("MISSING_CRS",)
+    assert report.artifact is None
+
+
+def test_reliability_lab_returns_positive_decision_only_with_artifact(tmp_path: Path) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    image = _texture()
+    _write_raster(before_path, image)
+    _write_raster(after_path, image)
+
+    report = RegistrationReliabilityLab(
+        ImageryPipelineConfig(minimum_blur_variance=5)
+    ).evaluate(before_path, after_path, tmp_path / "out")
+
+    assert report.status in {QualityStatus.PASS, QualityStatus.PASS_WITH_WARNING}
+    assert report.reliable_for_change_detection
+    assert report.failure_stage is None
+    assert report.artifact is not None
+
+
+def test_reliability_lab_routes_visual_failure_to_manual_alignment(tmp_path: Path) -> None:
+    before_path, after_path = tmp_path / "before.tif", tmp_path / "after.tif"
+    featureless = np.full((SIZE, SIZE), 128, dtype=np.uint8)
+    _write_raster(before_path, featureless)
+    _write_raster(after_path, featureless)
+    lab = RegistrationReliabilityLab(ImageryPipelineConfig(minimum_blur_variance=0))
+
+    report = lab.evaluate(before_path, after_path, tmp_path / "out")
+
+    assert report.status == QualityStatus.REQUIRES_MANUAL_ALIGNMENT
+    assert not report.reliable_for_change_detection
+    assert report.failure_stage == "visual_refinement"
+    assert report.reason_codes == ("VISUAL_REGISTRATION_FAILED",)

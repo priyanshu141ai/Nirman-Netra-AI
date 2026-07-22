@@ -5,10 +5,7 @@ from typing import cast
 import cv2
 import numpy as np
 from numpy.typing import NDArray
-from pyproj import Transformer
-from rasterio.warp import calculate_default_transform
 from shapely.geometry import box
-from shapely.ops import transform
 
 from nirman_netra.imagery.config import ImageryPipelineConfig
 from nirman_netra.imagery.contracts import (
@@ -17,6 +14,11 @@ from nirman_netra.imagery.contracts import (
     QualityMetrics,
     QualityReport,
     QualityStatus,
+)
+from nirman_netra.imagery.crs import (
+    bounds_in_target,
+    resolution_in_target,
+    select_target_crs,
 )
 from nirman_netra.imagery.raster import IngestedRaster
 
@@ -131,37 +133,15 @@ def assess_raster(raster: IngestedRaster, config: ImageryPipelineConfig) -> Qual
     )
 
 
-def _bounds_in_before_crs(
-    before: IngestedRaster, after: IngestedRaster
-) -> tuple[float, float, float, float]:
-    bounds = after.metadata.bounds
-    transformer = Transformer.from_crs(
-        after.metadata.crs.value, before.metadata.crs.value, always_xy=True
-    )
-    projected = transform(
-        transformer.transform,
-        box(bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y),
-    )
-    return (
-        float(projected.bounds[0]),
-        float(projected.bounds[1]),
-        float(projected.bounds[2]),
-        float(projected.bounds[3]),
-    )
-
-
 def assess_pair(
     before: IngestedRaster, after: IngestedRaster, config: ImageryPipelineConfig
 ) -> PairQualityReport:
     """Assess geographic overlap, resolution, and band compatibility."""
 
     issues: list[QualityIssue] = []
-    before_bounds = before.metadata.bounds
-    before_shape = box(
-        before_bounds.min_x, before_bounds.min_y, before_bounds.max_x, before_bounds.max_y
-    )
-    after_left, after_bottom, after_right, after_top = _bounds_in_before_crs(before, after)
-    after_shape = box(after_left, after_bottom, after_right, after_top)
+    target = select_target_crs(before.metadata, after.metadata, config.target_crs)
+    before_shape = box(*bounds_in_target(before.metadata, target))
+    after_shape = box(*bounds_in_target(after.metadata, target))
     intersection = before_shape.intersection(after_shape)
     overlap = (
         0.0
@@ -176,21 +156,9 @@ def assess_pair(
                 message="raster footprints have insufficient overlap",
             )
         )
-    after_resolution = after.metadata.resolution
-    if before.metadata.crs != after.metadata.crs:
-        after_bounds = after.metadata.bounds
-        normalized_transform, _, _ = calculate_default_transform(
-            after.metadata.crs.value,
-            before.metadata.crs.value,
-            after.metadata.width,
-            after.metadata.height,
-            after_bounds.min_x,
-            after_bounds.min_y,
-            after_bounds.max_x,
-            after_bounds.max_y,
-        )
-        after_resolution = (abs(normalized_transform.a), abs(normalized_transform.e))
-    resolution_values = (*before.metadata.resolution, *after_resolution)
+    before_resolution = resolution_in_target(before.metadata, target)
+    after_resolution = resolution_in_target(after.metadata, target)
+    resolution_values = (*before_resolution, *after_resolution)
     resolution_ratio = max(resolution_values) / min(resolution_values)
     if resolution_ratio > config.maximum_resolution_ratio:
         issues.append(
