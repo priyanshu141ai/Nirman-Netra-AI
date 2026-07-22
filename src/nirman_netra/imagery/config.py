@@ -2,7 +2,9 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pyproj import CRS
+from pyproj.exceptions import CRSError
 
 
 class ImageryPipelineConfig(BaseModel):
@@ -17,7 +19,9 @@ class ImageryPipelineConfig(BaseModel):
     minimum_valid_pixel_ratio: float = Field(default=0.8, ge=0, le=1)
     minimum_geographic_overlap: float = Field(default=0.2, gt=0, le=1)
     maximum_resolution_ratio: float = Field(default=4.0, ge=1)
+    target_crs: str | None = None
     resampling: Literal["nearest", "bilinear", "cubic"] = "bilinear"
+    enable_visual_refinement: bool = True
     estimator: Literal["affine", "homography"] = "affine"
     maximum_features: int = Field(default=1_000, ge=50)
     normalization_low_percentile: float = Field(default=2.0, ge=0, le=100)
@@ -36,6 +40,19 @@ class ImageryPipelineConfig(BaseModel):
     ecc_iterations: int = Field(default=50, ge=1)
     ecc_epsilon: float = Field(default=1e-5, gt=0)
     cv_random_seed: int = 17
+
+    @field_validator("target_crs")
+    @classmethod
+    def validate_target_crs(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        try:
+            parsed = CRS.from_user_input(value)
+        except CRSError as exc:
+            raise ValueError("target CRS is invalid") from exc
+        if not parsed.is_projected:
+            raise ValueError("registration target CRS must be projected")
+        return parsed.to_string()
 
     @model_validator(mode="after")
     def validate_percentiles(self) -> "ImageryPipelineConfig":

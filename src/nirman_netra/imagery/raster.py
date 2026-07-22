@@ -11,8 +11,9 @@ from numpy.typing import NDArray
 from pydantic import ValidationError
 from rasterio.errors import RasterioIOError
 
-from nirman_netra.domain import BoundingBox, CoordinateReference
+from nirman_netra.domain import BoundingBox
 from nirman_netra.exceptions import CRSMismatchError, RasterMetadataError, RasterReadError
+from nirman_netra.geospatial import validate_crs
 from nirman_netra.imagery.contracts import RasterMetadata
 from nirman_netra.utils import deterministic_id, file_content_hash
 
@@ -86,7 +87,7 @@ class LocalRasterIngestor:
                 pixels = source.read()
                 valid_mask = np.all(source.read_masks() > 0, axis=0)
                 parsed_capture, raw_capture = _capture_timestamp(source.tags())
-                crs = CoordinateReference(value=source.crs.to_string())
+                crs = validate_crs(source.crs.to_string())
                 metadata = RasterMetadata(
                     asset_id=asset_id or deterministic_id("local-raster", checksum),
                     source_uri=path.resolve().as_uri(),
@@ -96,6 +97,7 @@ class LocalRasterIngestor:
                     dtype=source.dtypes[0],
                     channel_order=tuple(item.name for item in source.colorinterp),
                     crs=crs,
+                    epsg_code=source.crs.to_epsg(),
                     transform=transform_values,
                     bounds=BoundingBox(
                         min_x=source.bounds.left,

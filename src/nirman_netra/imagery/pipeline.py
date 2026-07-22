@@ -13,7 +13,10 @@ from nirman_netra.imagery.config import ImageryPipelineConfig
 from nirman_netra.imagery.contracts import QualityStatus, RegistrationArtifact
 from nirman_netra.imagery.quality import assess_pair, assess_raster
 from nirman_netra.imagery.raster import LocalRasterIngestor, RasterIngestor
-from nirman_netra.imagery.registration import register_aligned_pair
+from nirman_netra.imagery.registration import (
+    accept_geospatial_alignment,
+    register_aligned_pair,
+)
 from nirman_netra.persistence.registration import persist_registration
 from nirman_netra.utils import content_hash, deterministic_id, file_content_hash
 
@@ -61,7 +64,11 @@ class RegistrationPipeline:
             raise RegistrationQualityError(f"raster pair rejected: {','.join(codes)}")
 
         aligned = align_pair(before, after, self._config)
-        computation = register_aligned_pair(aligned, self._config)
+        computation = (
+            register_aligned_pair(aligned, self._config)
+            if self._config.enable_visual_refinement
+            else accept_geospatial_alignment(aligned, self._config)
+        )
         warning_codes = tuple(
             sorted(
                 {
