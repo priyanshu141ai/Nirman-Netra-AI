@@ -17,6 +17,22 @@ class RasterMetadataError(NirmanNetraError):
     """Raster metadata is missing or invalid."""
 
 
+class InsufficientOverlapError(NirmanNetraError):
+    """Raster footprints do not overlap enough for comparison."""
+
+
+class RegistrationError(NirmanNetraError):
+    """Visual registration cannot produce a reliable transform."""
+
+
+class RegistrationQualityError(RegistrationError):
+    """Input quality is too low for automatic registration."""
+
+
+class TransformValidationError(RegistrationError):
+    """An estimated transform is physically implausible."""
+
+
 class CRSMismatchError(NirmanNetraError):
     """A CRS is invalid or incompatible with an operation."""
 

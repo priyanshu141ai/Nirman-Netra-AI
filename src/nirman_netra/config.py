@@ -10,12 +10,15 @@ from pyproj import CRS
 from pyproj.exceptions import CRSError
 
 from nirman_netra.exceptions import ConfigurationError
+from nirman_netra.imagery.config import ImageryPipelineConfig
 
 
 class Settings(BaseSettings):
     """Validated settings loaded from environment variables or a local .env file."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", case_sensitive=False)
+    model_config = SettingsConfigDict(
+        env_file=".env", env_nested_delimiter="__", extra="ignore", case_sensitive=False
+    )
 
     app_env: Literal["development", "test", "staging", "production"] = "development"
     database_url: PostgresDsn = PostgresDsn("postgresql://localhost/nirman_netra")
@@ -24,6 +27,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     max_upload_bytes: int = Field(default=50 * 1024 * 1024, gt=0)
     default_processing_crs: str | None = None
+    imagery: ImageryPipelineConfig = Field(default_factory=ImageryPipelineConfig)
 
     @field_validator("log_level")
     @classmethod
