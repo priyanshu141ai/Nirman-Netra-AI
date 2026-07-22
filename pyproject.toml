@@ -8,13 +8,26 @@ version = "0.1.0"
 description = "Geospatial municipal inspection decision-support foundation"
 requires-python = ">=3.11"
 dependencies = [
+  "alembic>=1.16,<2",
+  "affine>=2.4,<3",
   "fastapi>=0.116,<1",
+  "numpy>=2,<3",
+  "onnx>=1.17,<2",
+  "onnxruntime>=1.20,<2",
+  "opencv-python-headless>=4.11,<5",
   "pydantic-settings>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+  "pyarrow>=20,<25",
   "pyproj>=3.7,<4",
+  "rasterio>=1.4,<2",
   "shapely>=2.1,<3",
   "streamlit>=1.47,<2",
+  "sqlalchemy>=2.0,<3",
   "uvicorn[standard]>=0.35,<1",
 ]
+
+[project.scripts]
+generate-synthetic = "nirman_netra.data.cli:main"
 
 [dependency-groups]
 dev = [
@@ -47,5 +60,27 @@ strict = true
 files = ["src", "tests"]
 
 [[tool.mypy.overrides]]
+module = ["pyarrow.*"]
+ignore_missing_imports = true
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
 module = ["streamlit"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["affine", "rasterio", "rasterio.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["onnxruntime", "onnxruntime.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+  "nirman_netra.imagery.alignment",
+  "nirman_netra.imagery.quality",
+  "nirman_netra.imagery.raster",
+  "nirman_netra.persistence.registration",
+]
+disallow_untyped_calls = false

@@ -24,3 +24,13 @@ def test_valid_settings() -> None:
 def test_invalid_settings(key: str, value: object) -> None:
     with pytest.raises(ConfigurationError):
         load_settings(**{key: value})
+
+
+def test_nested_imagery_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IMAGERY__RESAMPLING", "cubic")
+    monkeypatch.setenv("IMAGERY__MINIMUM_GEOGRAPHIC_OVERLAP", "0.35")
+
+    settings = load_settings()
+
+    assert settings.imagery.resampling == "cubic"
+    assert settings.imagery.minimum_geographic_overlap == 0.35

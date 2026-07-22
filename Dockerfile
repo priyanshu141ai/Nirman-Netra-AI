@@ -5,13 +5,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_LINK_MODE=copy
 
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libexpat1 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY --from=uv /uv /uvx /bin/
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY src ./src
-RUN uv sync --frozen --no-dev && useradd --create-home app
+COPY alembic.ini ./
+COPY migrations ./migrations
+RUN uv sync --frozen --no-dev && useradd --create-home app \
+    && mkdir -p /data/objects /data/derived \
+    && chown -R app:app /data
 
 USER app
-EXPOSE 8000
-CMD ["uv", "run", "uvicorn", "nirman_netra.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8000 8501
+CMD ["/app/.venv/bin/uvicorn", "nirman_netra.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

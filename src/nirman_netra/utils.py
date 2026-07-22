@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 
@@ -22,6 +23,16 @@ def content_hash(content: bytes) -> str:
     """Return a SHA-256 checksum for immutable content."""
 
     return sha256(content).hexdigest()
+
+
+def file_content_hash(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Stream a file into a SHA-256 checksum without loading it fully into memory."""
+
+    digest = sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(chunk_size):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def new_correlation_id() -> str:

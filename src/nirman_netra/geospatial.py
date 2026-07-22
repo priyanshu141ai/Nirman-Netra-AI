@@ -1,6 +1,6 @@
 """Safe geospatial validation and measurement primitives."""
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import ValidationError
@@ -84,3 +84,26 @@ def calculate_safe_area(
     if not reference.is_projected:
         raise CRSMismatchError("area requires a projected CRS")
     return float(area(validate_geometry(value)))
+
+
+def pixel_area_square_metres(
+    transform: Sequence[float],
+    crs: str | int | CoordinateReference,
+) -> float:
+    """Calculate affine pixel area in square metres for a projected CRS."""
+
+    reference = validate_crs(crs)
+    parsed = CRS.from_user_input(reference.value)
+    if not parsed.is_projected or len(parsed.axis_info) < 2:
+        raise CRSMismatchError("pixel area requires a projected CRS with known units")
+    x_factor = parsed.axis_info[0].unit_conversion_factor
+    y_factor = parsed.axis_info[1].unit_conversion_factor
+    if x_factor is None or y_factor is None:
+        raise CRSMismatchError("projected CRS axis units are unavailable")
+    if len(transform) < 6:
+        raise GeometryValidationError("pixel transform requires six affine values")
+    a, b, _, d, e, _ = transform[:6]
+    pixel_area = abs(a * e - b * d) * x_factor * y_factor
+    if pixel_area <= 0:
+        raise GeometryValidationError("pixel transform has zero area")
+    return float(pixel_area)
