@@ -3,19 +3,48 @@ services:
     build: .
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql://nirman_netra:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/nirman_netra
+      DATABASE_URL: postgresql+psycopg://nirman_netra:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/nirman_netra
       OBJECT_STORAGE_ORIGINAL_PATH: /data/objects
       OBJECT_STORAGE_DERIVED_PATH: /data/derived
       LOG_LEVEL: INFO
       MAX_UPLOAD_BYTES: 52428800
+      MAXIMUM_RASTER_PIXELS: 100000000
+      ENFORCE_RUNTIME_READINESS: "true"
+      USE_DATABASE_PERSISTENCE: "true"
+      DATABASE_GEOMETRY_SRID: "32643"
     ports:
-      - "8000:8000"
+      - "${API_PORT:-18000}:8000"
     volumes:
-      - ./data/objects:/data/objects
-      - ./data/derived:/data/derived
+      - original_assets:/data/objects
+      - derived_assets:/data/derived
     depends_on:
       db:
         condition: service_healthy
+    command: ["sh", "-c", "/app/.venv/bin/alembic upgrade head && exec /app/.venv/bin/uvicorn nirman_netra.api.main:app --host 0.0.0.0 --port 8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 2g
+
+  dashboard:
+    build: .
+    environment:
+      APP_ENV: production
+      DASHBOARD_API_URL: http://api:8000
+    command: ["/app/.venv/bin/streamlit", "run", "src/nirman_netra/dashboard/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    ports:
+      - "${DASHBOARD_PORT:-18502}:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
 
   db:
     image: postgis/postgis:16-3.5
@@ -25,11 +54,16 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nirman_netra -d nirman_netra"]
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 1g
 
 volumes:
   postgres_data:
+  original_assets:
+  derived_assets:

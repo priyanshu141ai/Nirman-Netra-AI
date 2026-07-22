@@ -142,16 +142,28 @@ class Normalization(ContractModel):
 
 
 class ModelArtifactMetadata(ContractModel):
+    artifact_schema_version: str = "1.0.0"
     model_name: str
     model_version: str
     training_dataset_version: str
+    feature_schema_version: str | None = None
     runtime: Literal["onnx"]
     input_schema: InputSchema
     normalization: Normalization
     class_mapping: dict[int, str]
+    required_crs: tuple[str, ...] = ()
+    supported_resolution_m: tuple[float, float] | None = None
     checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     onnx_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     evaluation_metrics: SegmentationMetrics
+
+    @model_validator(mode="after")
+    def validate_resolution_range(self) -> "ModelArtifactMetadata":
+        if self.supported_resolution_m is not None:
+            minimum, maximum = self.supported_resolution_m
+            if minimum <= 0 or minimum > maximum:
+                raise ValueError("supported resolution range is invalid")
+        return self
 
 
 class PolygonExtractionConfig(ContractModel):
