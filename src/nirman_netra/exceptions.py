@@ -33,6 +33,22 @@ class TransformValidationError(RegistrationError):
     """An estimated transform is physically implausible."""
 
 
+class DatasetValidationError(NirmanNetraError):
+    """A training dataset violates its schema or split policy."""
+
+
+class TrainingError(NirmanNetraError):
+    """Baseline training cannot complete under the requested configuration."""
+
+
+class ArtifactValidationError(NirmanNetraError):
+    """A versioned model artifact is missing, corrupt, or incompatible."""
+
+
+class InferenceValidationError(NirmanNetraError):
+    """Inference input does not match the model artifact schema."""
+
+
 class CRSMismatchError(NirmanNetraError):
     """A CRS is invalid or incompatible with an operation."""
 
