@@ -631,6 +631,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "pyarrow" },
     { name = "pydantic-settings" },
     { name = "pyproj" },
     { name = "shapely" },
@@ -651,6 +652,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.116,<1" },
+    { name = "pyarrow", specifier = ">=20,<25" },
     { name = "pydantic-settings", specifier = ">=2.10,<3" },
     { name = "pyproj", specifier = ">=3.7,<4" },
     { name = "shapely", specifier = ">=2.1,<3" },
