@@ -10,13 +10,22 @@ from nirman_netra.application.compatibility import (
     require_compatible_rule_set,
 )
 from nirman_netra.application.contracts import JobState, ProcessingJob, RuleSetRequirement
-from nirman_netra.application.demo import _CAPTURE_NEW, _context, _model, run_synthetic_demo
+from nirman_netra.application.demo import (
+    _CAPTURE_NEW,
+    _CAPTURE_OLD,
+    _context,
+    _images,
+    _model,
+    _write_raster,
+    run_synthetic_demo,
+)
 from nirman_netra.application.jobs import InProcessJobRunner, RetryPolicy
 from nirman_netra.application.monitoring import MetricsRegistry
 from nirman_netra.application.repository import InMemoryIntegrationRepository
 from nirman_netra.application.service import IntegrationService
 from nirman_netra.config import Settings
 from nirman_netra.exceptions import (
+    ConfigurationError,
     ModelChecksumMismatchError,
     ModelNotAvailableError,
     ModelSchemaMismatchError,
@@ -200,6 +209,46 @@ def test_readiness_fails_for_database(tmp_path: Path) -> None:
     assert report.components[0].code == "DATABASE_UNAVAILABLE"
 
 
+def test_startup_loads_configured_model_and_municipality(tmp_path: Path) -> None:
+    artifact, requirement = _model(tmp_path)
+    context = _context("municipality-configured", True)
+    requirement_path = tmp_path / "model-requirement.json"
+    context_path = tmp_path / "municipal-context.json"
+    requirement_path.write_text(requirement.model_dump_json(), encoding="utf-8")
+    context_path.write_text(context.model_dump_json(), encoding="utf-8")
+    service = IntegrationService(
+        Settings(
+            app_env="test",
+            model_artifact_path=artifact,
+            model_requirement_path=requirement_path,
+            municipal_context_path=context_path,
+            object_storage_original_path=tmp_path / "objects",
+            object_storage_derived_path=tmp_path / "derived",
+        ),
+        database_probe=lambda: True,
+    )
+
+    service.initialize()
+
+    assert service.model_catalogue() == (requirement,)
+    assert service.repository.get_context(context.municipality_id).model_dump(mode="json") == (
+        context.model_dump(mode="json")
+    )
+
+
+def test_invalid_startup_resource_fails_explicitly(tmp_path: Path) -> None:
+    service = IntegrationService(
+        Settings(
+            app_env="test",
+            municipal_context_path=tmp_path / "missing-context.json",
+            object_storage_original_path=tmp_path / "objects",
+            object_storage_derived_path=tmp_path / "derived",
+        )
+    )
+    with pytest.raises(ConfigurationError):
+        service.initialize()
+
+
 def test_api_has_all_phase8_routes(tmp_path: Path) -> None:
     settings = Settings(
         app_env="test",
@@ -323,6 +372,7 @@ def test_compose_defines_only_used_services_and_healthchecks() -> None:
     assert "redis:" not in compose and "minio:" not in compose
     assert compose.count("healthcheck:") == 3
     assert "mem_limit:" in compose
+    assert 'USE_DATABASE_PERSISTENCE: "true"' in compose
 
 
 def test_dashboard_uses_shared_api_and_safe_language() -> None:
@@ -353,3 +403,34 @@ def test_demo_distinguishes_approved_and_permit_mismatch(tmp_path: Path) -> None
 
 def test_content_based_processing_configuration_is_stable() -> None:
     assert content_hash(b"phase8") == content_hash(b"phase8")
+
+
+def test_repeated_asset_and_pair_ingestion_is_idempotent(tmp_path: Path) -> None:
+    service = IntegrationService(
+        Settings(
+            app_env="test",
+            object_storage_original_path=tmp_path / "objects",
+            object_storage_derived_path=tmp_path / "derived",
+        )
+    )
+    old_pixels, new_pixels = _images(919)
+    old_source, new_source = tmp_path / "old.tif", tmp_path / "new.tif"
+    _write_raster(old_source, old_pixels, _CAPTURE_OLD)
+    _write_raster(new_source, new_pixels, _CAPTURE_NEW)
+    service.storage.put_original_immutable(old_source, "repeat/old.tif")
+    service.storage.put_original_immutable(new_source, "repeat/new.tif")
+
+    old = service.ingest_asset(
+        object_key="repeat/old.tif", municipality_id="municipality-repeat"
+    )
+    assert service.ingest_asset(
+        object_key="repeat/old.tif", municipality_id="municipality-repeat"
+    ) == old
+    new = service.ingest_asset(
+        object_key="repeat/new.tif", municipality_id="municipality-repeat"
+    )
+    pair = service.create_image_pair(old.asset_id, new.asset_id)
+
+    assert service.create_image_pair(old.asset_id, new.asset_id) == pair
+    assert len(service.repository.assets) == 2
+    assert len(service.repository.pairs) == 1

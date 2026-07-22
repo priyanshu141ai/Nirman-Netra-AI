@@ -2,6 +2,8 @@
 
 import logging
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from time import perf_counter
 
@@ -45,6 +47,7 @@ from nirman_netra.exceptions import (
     ModelNotAvailableError,
     ModelSchemaMismatchError,
     NirmanNetraError,
+    PersistenceError,
     RasterMetadataError,
     RasterReadError,
     RecordNotFoundError,
@@ -112,6 +115,7 @@ def _expected_error(error: NirmanNetraError) -> tuple[str, str, int]:
         (CaseTransitionError, "INVALID_CASE_TRANSITION", "Case transition is invalid.", 409),
         (EvidenceIntegrityError, "EVIDENCE_INTEGRITY_FAILURE", "Evidence integrity failed.", 409),
         (StorageError, "STORAGE_UNAVAILABLE", "Object storage is unavailable.", 503),
+        (PersistenceError, "STORAGE_UNAVAILABLE", "Database persistence is unavailable.", 503),
         (UploadValidationError, "INVALID_RASTER", "Asset metadata is invalid.", 422),
     )
     for error_type, code, message, status in mappings:
@@ -129,7 +133,16 @@ def create_app(
     active_settings = settings or load_settings()
     configure_logging(active_settings.log_level)
     logger = logging.getLogger(__name__)
-    app = FastAPI(title="NirmanNetra AI", version="0.1.0")
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        active_service.initialize()
+        try:
+            yield
+        finally:
+            active_service.close()
+
+    app = FastAPI(title="NirmanNetra AI", version="0.1.0", lifespan=lifespan)
     app.state.settings = active_settings
     active_service = service or IntegrationService(active_settings)
     app.state.service = active_service

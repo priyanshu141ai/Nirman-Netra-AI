@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from pydantic import ValidationError
 from shapely.geometry import mapping, shape
 from shapely.ops import unary_union
 from sqlalchemy import create_engine, text
@@ -58,6 +59,7 @@ from nirman_netra.data.contracts import Parcel
 from nirman_netra.domain import GeometryReference
 from nirman_netra.exceptions import (
     CaseTransitionError,
+    ConfigurationError,
     ModelCompatibilityError,
     ModelNotAvailableError,
     RecordNotFoundError,
@@ -96,7 +98,18 @@ class IntegrationService:
         database_probe: Callable[[], bool] | None = None,
     ) -> None:
         self.settings = settings
-        self.repository = repository or InMemoryIntegrationRepository()
+        if repository is not None:
+            self.repository = repository
+        elif settings.use_database_persistence:
+            from nirman_netra.application.postgres_repository import (
+                PostgresIntegrationRepository,
+            )
+
+            self.repository = PostgresIntegrationRepository(
+                str(settings.database_url), geometry_srid=settings.database_geometry_srid
+            )
+        else:
+            self.repository = InMemoryIntegrationRepository()
         self.storage = storage or LocalObjectStorage(
             settings.object_storage_original_path,
             settings.object_storage_derived_path,
@@ -110,6 +123,33 @@ class IntegrationService:
         )
         self._database_probe = database_probe or self._database_ready
         self._model_artifacts: dict[tuple[str, str], tuple[ModelRequirement, Path]] = {}
+        self._initialized = False
+
+    def initialize(self) -> None:
+        if self._initialized:
+            return
+        self.repository.initialize()
+        try:
+            if self.settings.model_requirement_path is not None:
+                if self.settings.model_artifact_path is None:
+                    raise ConfigurationError("model requirement needs an artifact directory")
+                requirement = ModelRequirement.model_validate_json(
+                    self.settings.model_requirement_path.read_text(encoding="utf-8")
+                )
+                self.register_model(requirement, self.settings.model_artifact_path)
+            if self.settings.municipal_context_path is not None:
+                context = MunicipalContext.model_validate_json(
+                    self.settings.municipal_context_path.read_text(encoding="utf-8")
+                )
+                self.register_municipality(context)
+        except (OSError, ValidationError) as exc:
+            raise ConfigurationError(
+                "configured runtime resource is invalid or unavailable"
+            ) from exc
+        self._initialized = True
+
+    def close(self) -> None:
+        self.repository.close()
 
     def _database_ready(self) -> bool:
         if not self.settings.enforce_runtime_readiness:
@@ -135,7 +175,10 @@ class IntegrationService:
 
     def _models_ready(self) -> bool:
         if not self._model_artifacts:
-            return self.settings.model_artifact_path is None
+            return (
+                self.settings.model_artifact_path is None
+                and self.settings.model_requirement_path is None
+            )
         try:
             for requirement, path in self._model_artifacts.values():
                 load_compatible_model(
@@ -144,7 +187,10 @@ class IntegrationService:
                     source_crs=(
                         requirement.required_crs[0]
                         if requirement.required_crs
-                        else (self.settings.default_processing_crs or "EPSG:32643")
+                        else (
+                            self.settings.default_processing_crs
+                            or f"EPSG:{self.settings.database_geometry_srid}"
+                        )
                     ),
                     source_resolution_m=requirement.supported_resolution_m[0],
                 )
@@ -174,6 +220,20 @@ class IntegrationService:
         metadata = raster.metadata.model_copy(
             update={"asset_id": asset_id, "source_uri": self.storage.original_uri(object_key)}
         )
+        try:
+            existing = self.repository.get_asset(asset_id)
+        except RecordNotFoundError:
+            existing = None
+        if existing is not None:
+            if (
+                existing.municipality_id == municipality_id
+                and existing.object_key == object_key
+                and existing.storage_uri == self.storage.original_uri(object_key)
+                and existing.metadata == metadata
+                and existing.quality == quality.model_copy(update={"asset_id": asset_id})
+            ):
+                return existing
+            raise UploadValidationError("asset hash already exists with different metadata")
         record = AssetRecord(
             asset_id=asset_id,
             municipality_id=municipality_id,
@@ -203,6 +263,21 @@ class IntegrationService:
             old.metadata.content_sha256,
             new.metadata.content_sha256,
         )
+        try:
+            existing = self.repository.get_pair(pair_id)
+        except RecordNotFoundError:
+            existing = None
+        if existing is not None:
+            if (
+                existing.old_asset_id == old_asset_id
+                and existing.new_asset_id == new_asset_id
+                and existing.source_hashes == (
+                    old.metadata.content_sha256,
+                    new.metadata.content_sha256,
+                )
+            ):
+                return existing
+            raise UploadValidationError("image pair ID conflicts with stored source metadata")
         return self.repository.save_pair(
             ImagePairRecord(
                 pair_id=pair_id,
@@ -274,8 +349,7 @@ class IntegrationService:
         result_id = deterministic_id("change-result", job.idempotency_key)
         if not evidence.change_polygons:
             result = self._result(job, request, evidence, result_id, RiskLevel.LOW, None)
-            self.repository.results.setdefault(result_id, result)
-            return result_id
+            return self.repository.save_result(result).result_id
         context = self.repository.get_context(new.municipality_id)
         change_geometry = GeometryReference(
             geometry_id=f"change-{result_id}",
@@ -589,6 +663,7 @@ class IntegrationService:
         return self.repository.get_case(case_id)
 
     def get_parcel(self, parcel_id: str) -> Parcel:
+        self.initialize()
         for context in self.repository.contexts.values():
             for parcel in context.parcels:
                 if parcel.parcel_id == parcel_id:
@@ -596,6 +671,7 @@ class IntegrationService:
         raise RecordNotFoundError(f"parcel not found: {parcel_id}")
 
     def model_catalogue(self) -> tuple[ModelRequirement, ...]:
+        self.initialize()
         return tuple(
             item[0]
             for item in sorted(
@@ -604,11 +680,13 @@ class IntegrationService:
         )
 
     def rule_set_catalogue(self) -> tuple[MunicipalRuleSet, ...]:
+        self.initialize()
         return tuple(
             rule for context in self.repository.contexts.values() for rule in context.rule_sets
         )
 
     def data_quality(self) -> DataQualitySnapshot:
+        self.initialize()
         return DataQualitySnapshot(
             created_at=utc_now(),
             total_assets=len(self.repository.assets),
@@ -624,6 +702,7 @@ class IntegrationService:
         )
 
     def readiness(self) -> ReadinessReport:
+        self.initialize()
         components = [
             ReadinessComponent(
                 name="postgresql_postgis", ready=self._database_probe(), code="DATABASE_UNAVAILABLE"

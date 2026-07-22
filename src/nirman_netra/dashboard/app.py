@@ -21,7 +21,7 @@ def render(client: DashboardApiClient) -> None:
         st.caption("Parcel, approved footprint, setback and detected-change map layers")
     with queue:
         st.subheader("High-risk and assigned-case queues")
-        st.dataframe(client.cases()["items"], use_container_width=True)
+        st.dataframe(client.cases()["items"], width="stretch")
     with evidence:
         st.subheader("Historical, current and registered imagery")
         st.info(SAFE_RESULT_LABEL)

@@ -55,7 +55,14 @@ docker compose up --build
 ```
 
 Compose starts PostgreSQL/PostGIS, runs Alembic migrations, then starts the API
-and dashboard. Check status with:
+and dashboard with durable records. By default, open http://127.0.0.1:18000/docs
+and http://127.0.0.1:18502. PostgreSQL is local-only on port 15432. Override
+ports with `API_PORT`, `DASHBOARD_PORT`, and `POSTGRES_PORT`.
+
+For real processing, set `MODEL_ARTIFACT_PATH`, `MODEL_REQUIREMENT_PATH`, and
+`MUNICIPAL_CONTEXT_PATH` to operator-provided, container-readable resources.
+The API never substitutes another model or municipal rule set.
+Check status with:
 
 ```powershell
 docker compose ps

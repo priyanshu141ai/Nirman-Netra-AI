@@ -50,6 +50,7 @@ municipalities = Table(
         __import__("sqlalchemy").Column(
             "geometry", Geometry("MULTIPOLYGON", 32643), nullable=False
         ),
+        __import__("sqlalchemy").Column("payload", JSON),
     ],
 )
 wards = Table(
@@ -120,6 +121,7 @@ image_pairs = Table(
     __import__("sqlalchemy").Column(
         "new_asset_id", ForeignKey("imagery_assets.id"), nullable=False
     ),
+    __import__("sqlalchemy").Column("payload", JSON),
     UniqueConstraint("old_asset_id", "new_asset_id", name="uq_image_pair_sources"),
 )
 processing_jobs = Table(
@@ -199,7 +201,7 @@ evidence_assets = Table(
     metadata,
     __import__("sqlalchemy").Column("id", String(96), primary_key=True),
     __import__("sqlalchemy").Column("case_id", ForeignKey("inspection_cases.id"), nullable=False),
-    __import__("sqlalchemy").Column("source_asset_id", ForeignKey("imagery_assets.id")),
+    __import__("sqlalchemy").Column("source_asset_id", ForeignKey("evidence_assets.id")),
     __import__("sqlalchemy").Column("storage_uri", Text, nullable=False),
     __import__("sqlalchemy").Column("checksum", String(64), nullable=False),
     __import__("sqlalchemy").Column("payload", JSON, nullable=False),

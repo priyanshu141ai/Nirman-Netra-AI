@@ -27,7 +27,14 @@ class InMemoryIntegrationRepository:
         self.cases: dict[str, InspectionCase] = {}
         self.contexts: dict[str, MunicipalContext] = {}
 
+    def initialize(self) -> None:
+        """Load durable state when implemented by a repository adapter."""
+
+    def close(self) -> None:
+        """Release adapter resources when implemented by a repository adapter."""
+
     def save_asset(self, record: AssetRecord) -> AssetRecord:
+        self.initialize()
         with self._lock:
             existing = self.assets.get(record.asset_id)
             if existing is not None and existing != record:
@@ -36,12 +43,14 @@ class InMemoryIntegrationRepository:
             return record
 
     def get_asset(self, asset_id: str) -> AssetRecord:
+        self.initialize()
         try:
             return self.assets[asset_id]
         except KeyError as exc:
             raise RecordNotFoundError(f"asset not found: {asset_id}") from exc
 
     def save_pair(self, record: ImagePairRecord) -> ImagePairRecord:
+        self.initialize()
         with self._lock:
             existing = self.pairs.get(record.pair_id)
             if existing is not None and existing != record:
@@ -50,17 +59,20 @@ class InMemoryIntegrationRepository:
             return record
 
     def get_pair(self, pair_id: str) -> ImagePairRecord:
+        self.initialize()
         try:
             return self.pairs[pair_id]
         except KeyError as exc:
             raise RecordNotFoundError(f"image pair not found: {pair_id}") from exc
 
     def find_job_by_key(self, key: str) -> ProcessingJob | None:
+        self.initialize()
         with self._lock:
             job_id = self.job_keys.get(key)
             return self.jobs.get(job_id) if job_id is not None else None
 
     def save_job(self, job: ProcessingJob) -> ProcessingJob:
+        self.initialize()
         with self._lock:
             existing_id = self.job_keys.get(job.idempotency_key)
             if existing_id is not None and existing_id != job.job_id:
@@ -70,12 +82,14 @@ class InMemoryIntegrationRepository:
             return job
 
     def get_job(self, job_id: str) -> ProcessingJob:
+        self.initialize()
         try:
             return self.jobs[job_id]
         except KeyError as exc:
             raise RecordNotFoundError(f"job not found: {job_id}") from exc
 
     def save_job_request(self, job_id: str, request: ProcessPairRequest) -> None:
+        self.initialize()
         with self._lock:
             existing = self.job_requests.get(job_id)
             if existing is not None and existing != request:
@@ -83,6 +97,7 @@ class InMemoryIntegrationRepository:
             self.job_requests[job_id] = request
 
     def get_job_request(self, job_id: str) -> ProcessPairRequest:
+        self.initialize()
         try:
             return self.job_requests[job_id]
         except KeyError as exc:
@@ -95,6 +110,7 @@ class InMemoryIntegrationRepository:
     ) -> tuple[ChangeResultRecord, InspectionCase]:
         """Atomically publish result and case after every computation succeeds."""
 
+        self.initialize()
         with self._lock:
             existing_result = self.results.get(result.result_id)
             existing_case = self.cases.get(case.case_id)
@@ -106,19 +122,31 @@ class InMemoryIntegrationRepository:
             self.cases[case.case_id] = case
             return result, case
 
+    def save_result(self, result: ChangeResultRecord) -> ChangeResultRecord:
+        self.initialize()
+        with self._lock:
+            existing = self.results.get(result.result_id)
+            if existing is not None and existing != result:
+                raise ValueError(f"change result already exists: {result.result_id}")
+            self.results[result.result_id] = result
+            return result
+
     def get_result(self, result_id: str) -> ChangeResultRecord:
+        self.initialize()
         try:
             return self.results[result_id]
         except KeyError as exc:
             raise RecordNotFoundError(f"change result not found: {result_id}") from exc
 
     def get_case(self, case_id: str) -> InspectionCase:
+        self.initialize()
         try:
             return self.cases[case_id]
         except KeyError as exc:
             raise RecordNotFoundError(f"case not found: {case_id}") from exc
 
     def update_case(self, case: InspectionCase) -> InspectionCase:
+        self.initialize()
         with self._lock:
             if case.case_id not in self.cases:
                 raise RecordNotFoundError(f"case not found: {case.case_id}")
@@ -126,6 +154,7 @@ class InMemoryIntegrationRepository:
             return case
 
     def list_cases(self, predicate: Callable[[InspectionCase], bool]) -> tuple[InspectionCase, ...]:
+        self.initialize()
         with self._lock:
             return tuple(
                 sorted(
@@ -135,10 +164,12 @@ class InMemoryIntegrationRepository:
             )
 
     def register_context(self, context: MunicipalContext) -> None:
+        self.initialize()
         with self._lock:
             self.contexts[context.municipality_id] = context
 
     def get_context(self, municipality_id: str) -> MunicipalContext:
+        self.initialize()
         try:
             return self.contexts[municipality_id]
         except KeyError as exc:
