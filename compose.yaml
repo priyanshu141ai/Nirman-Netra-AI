@@ -1,0 +1,35 @@
+services:
+  api:
+    build: .
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://nirman_netra:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/nirman_netra
+      OBJECT_STORAGE_ORIGINAL_PATH: /data/objects
+      OBJECT_STORAGE_DERIVED_PATH: /data/derived
+      LOG_LEVEL: INFO
+      MAX_UPLOAD_BYTES: 52428800
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/objects:/data/objects
+      - ./data/derived:/data/derived
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgis/postgis:16-3.5
+    environment:
+      POSTGRES_DB: nirman_netra
+      POSTGRES_USER: nirman_netra
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nirman_netra -d nirman_netra"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
