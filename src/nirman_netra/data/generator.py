@@ -162,9 +162,11 @@ def build_synthetic_dataset(config: GenerationConfig) -> SyntheticDataset:
                     parcel_id=parcel_id,
                     footprint_id=footprint_id,
                     plan_version=plan_version,
+                    permit_type="extension",
                     valid_from=valid_from,
                     valid_until=valid_until,
                     status="expired" if is_expired else "active",
+                    applicable_conditions=("synthetic-plan-conformance",),
                 )
             )
             record_index += 1
@@ -224,6 +226,9 @@ def build_synthetic_dataset(config: GenerationConfig) -> SyntheticDataset:
             crs=config.processing_crs,
             category="construction_change",
             received_at=config.reference_time - timedelta(days=2),
+            description="possible exterior footprint change",
+            media_sha256=content_hash(f"{config.configuration_hash}:complaint-media".encode()),
+            perceptual_hash="0f0f0f0f0f0f0f0f",
         )
     ]
     if config.scenario == Scenario.DUPLICATE_COMPLAINTS:

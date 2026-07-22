@@ -82,9 +82,11 @@ class Permit(ContractModel):
     parcel_id: EntityId
     footprint_id: EntityId
     plan_version: int = Field(gt=0)
+    permit_type: Literal["new_building", "extension", "renovation", "demolition"] = "extension"
     valid_from: date
     valid_until: date
     status: Literal["active", "expired"]
+    applicable_conditions: tuple[str, ...] = ()
 
     @model_validator(mode="after")
     def validate_dates(self) -> "Permit":
@@ -125,6 +127,9 @@ class Complaint(ContractModel):
     crs: CoordinateReference
     category: Literal["construction_change", "possible_encroachment"]
     received_at: datetime
+    description: str = Field(default="", max_length=2_000)
+    media_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    perceptual_hash: str | None = Field(default=None, pattern=r"^[0-9a-fA-F]+$")
 
     @model_validator(mode="after")
     def validate_coordinate(self) -> "Complaint":
