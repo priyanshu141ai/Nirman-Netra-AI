@@ -81,5 +81,41 @@ class AuditIntegrityError(NirmanNetraError):
     """An append-only timeline or audit chain is invalid."""
 
 
+class ModelNotAvailableError(NirmanNetraError):
+    """A specifically requested approved model artifact is unavailable."""
+
+
+class ModelCompatibilityError(NirmanNetraError):
+    """A model artifact is valid but incompatible with the requested operation."""
+
+
+class ModelChecksumMismatchError(ModelCompatibilityError):
+    """A requested model file does not match its recorded checksum."""
+
+
+class ModelSchemaMismatchError(ModelCompatibilityError):
+    """A requested model artifact violates the required integration schema."""
+
+
+class RuleSetNotAvailableError(NirmanNetraError):
+    """A specifically requested municipal rule set is unavailable or incompatible."""
+
+
+class QueueUnavailableError(NirmanNetraError):
+    """The configured processing queue cannot accept or run work."""
+
+
+class JobStateError(NirmanNetraError):
+    """A processing job operation is invalid for its current state."""
+
+
+class RecordNotFoundError(NirmanNetraError):
+    """A requested application record does not exist."""
+
+
+class UploadValidationError(NirmanNetraError):
+    """Uploaded asset metadata or object reference is invalid."""
+
+
 class ExternalServiceError(NirmanNetraError):
     """An external service failed."""

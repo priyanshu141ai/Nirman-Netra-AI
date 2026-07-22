@@ -82,6 +82,10 @@ def save_model_artifact(
     training_dataset_version: str,
     input_schema: InputSchema,
     evaluation_metrics: SegmentationMetrics,
+    artifact_schema_version: str = "1.0.0",
+    feature_schema_version: str | None = None,
+    required_crs: tuple[str, ...] = (),
+    supported_resolution_m: tuple[float, float] | None = None,
 ) -> ModelArtifactMetadata:
     """Save deterministic weights, an ONNX graph, and machine-readable metadata."""
 
@@ -99,13 +103,17 @@ def save_model_artifact(
         onnx_path = output_directory / ONNX_FILENAME
         _export_onnx(model, input_schema, onnx_path)
         metadata = ModelArtifactMetadata(
+            artifact_schema_version=artifact_schema_version,
             model_name="linear_pixel_logistic",
             model_version=model_version,
             training_dataset_version=training_dataset_version,
+            feature_schema_version=feature_schema_version,
             runtime="onnx",
             input_schema=input_schema,
             normalization=model.normalization,
             class_mapping={0: "background", 1: "building"},
+            required_crs=required_crs,
+            supported_resolution_m=supported_resolution_m,
             checksum=file_content_hash(weights_path),
             onnx_checksum=file_content_hash(onnx_path),
             evaluation_metrics=evaluation_metrics,

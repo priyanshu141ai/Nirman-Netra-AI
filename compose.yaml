@@ -3,19 +3,46 @@ services:
     build: .
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql://nirman_netra:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/nirman_netra
+      DATABASE_URL: postgresql+psycopg://nirman_netra:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/nirman_netra
       OBJECT_STORAGE_ORIGINAL_PATH: /data/objects
       OBJECT_STORAGE_DERIVED_PATH: /data/derived
       LOG_LEVEL: INFO
       MAX_UPLOAD_BYTES: 52428800
+      MAXIMUM_RASTER_PIXELS: 100000000
+      ENFORCE_RUNTIME_READINESS: "true"
     ports:
       - "8000:8000"
     volumes:
-      - ./data/objects:/data/objects
-      - ./data/derived:/data/derived
+      - original_assets:/data/objects
+      - derived_assets:/data/derived
     depends_on:
       db:
         condition: service_healthy
+    command: ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn nirman_netra.api.main:app --host 0.0.0.0 --port 8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 2g
+
+  dashboard:
+    build: .
+    environment:
+      APP_ENV: production
+      DASHBOARD_API_URL: http://api:8000
+    command: ["uv", "run", "streamlit", "run", "src/nirman_netra/dashboard/app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
 
   db:
     image: postgis/postgis:16-3.5
@@ -30,6 +57,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 1g
 
 volumes:
   postgres_data:
+  original_assets:
+  derived_assets:

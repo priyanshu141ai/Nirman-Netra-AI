@@ -133,6 +133,8 @@ class RiskWeights(ContractModel):
 
 class MunicipalRuleSet(ContractModel):
     rule_set_id: str = Field(min_length=1)
+    rule_version: str = "1.0.0"
+    risk_threshold_version: str = "1.0.0"
     municipality_id: str = Field(min_length=1)
     zone: str = Field(min_length=1)
     effective_from: date
