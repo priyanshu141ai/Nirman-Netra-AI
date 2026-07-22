@@ -65,5 +65,21 @@ class PersistenceError(NirmanNetraError):
     """Database persistence failed."""
 
 
+class CaseTransitionError(NirmanNetraError):
+    """A case lifecycle transition is invalid."""
+
+
+class AuthorizationError(NirmanNetraError):
+    """An actor role is not allowed to perform an operation."""
+
+
+class EvidenceIntegrityError(NirmanNetraError):
+    """Evidence content or chain-of-custody metadata is invalid."""
+
+
+class AuditIntegrityError(NirmanNetraError):
+    """An append-only timeline or audit chain is invalid."""
+
+
 class ExternalServiceError(NirmanNetraError):
     """An external service failed."""
